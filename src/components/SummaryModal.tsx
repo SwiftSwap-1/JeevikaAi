@@ -43,9 +43,8 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
   });
   const docRefId = `JK-${(profile?.name || 'BEN').slice(0, 3).toUpperCase()}-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-  // 1. Download as PDF using jsPDF + html2canvas
+  // 1. Download as PDF using jsPDF + html2canvas with bulletproof fallback
   const handleDownloadPdf = async () => {
-    if (!printRef.current) return;
     setIsGeneratingPdf(true);
     onNotify(
       currentLang === 'bho'
@@ -54,43 +53,60 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
     );
 
     try {
-      const element = printRef.current;
-
-      // Render canvas at scale 2 for crisp 300 DPI printer quality
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: 800,
-      });
-
-      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4',
       });
 
-      const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
-      const pdfHeight = pdf.internal.pageSize.getHeight(); // 297mm
-      const margin = 8;
-      const contentWidth = pdfWidth - margin * 2;
-      const contentHeight = (canvas.height * contentWidth) / canvas.width;
+      if (printRef.current) {
+        try {
+          const canvas = await html2canvas(printRef.current, {
+            scale: 1.5,
+            useCORS: true,
+            logging: false,
+            backgroundColor: '#ffffff',
+            windowWidth: 800,
+          });
 
-      let heightLeft = contentHeight;
-      let position = margin;
+          const imgData = canvas.toDataURL('image/png');
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = pdf.internal.pageSize.getHeight();
+          const margin = 8;
+          const contentWidth = pdfWidth - margin * 2;
+          const contentHeight = (canvas.height * contentWidth) / canvas.width;
 
-      // First page
-      pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
-      heightLeft -= (pdfHeight - margin * 2);
+          let heightLeft = contentHeight;
+          let position = margin;
 
-      // Subsequent pages if content overflows A4
-      while (heightLeft > 0) {
-        position = heightLeft - contentHeight + margin;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
-        heightLeft -= (pdfHeight - margin * 2);
+          pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
+          heightLeft -= (pdfHeight - margin * 2);
+
+          while (heightLeft > 0) {
+            position = heightLeft - contentHeight + margin;
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', margin, position, contentWidth, contentHeight);
+            heightLeft -= (pdfHeight - margin * 2);
+          }
+        } catch (canvasErr) {
+          console.warn('html2canvas fallback triggered:', canvasErr);
+          pdf.setFont('Helvetica', 'bold');
+          pdf.setFontSize(16);
+          pdf.text('JEEVIKAAI LIVELIHOOD ROADMAP', 15, 20);
+          pdf.setFont('Helvetica', 'normal');
+          pdf.setFontSize(10);
+          pdf.text(`Beneficiary: ${displayName}`, 15, 30);
+          pdf.text(`Date: ${dateStr}`, 15, 36);
+
+          const splitText = pdf.splitTextToSize(data.text, 180);
+          pdf.text(splitText, 15, 45);
+        }
+      } else {
+        pdf.setFont('Helvetica', 'bold');
+        pdf.setFontSize(16);
+        pdf.text('JEEVIKAAI LIVELIHOOD ROADMAP', 15, 20);
+        const splitText = pdf.splitTextToSize(data.text, 180);
+        pdf.text(splitText, 15, 35);
       }
 
       const pdfBaseName = (data.fname || 'JeevikaAI-Roadmap').replace(/\.txt$/i, '');
@@ -104,7 +120,7 @@ export const SummaryModal: React.FC<SummaryModalProps> = ({
       );
     } catch (err) {
       console.error('PDF generation error:', err);
-      onNotify('पीडीएफ बनाने में समस्या आई। कृपया टेक्स्ट फाइल सेव करें।');
+      onNotify('पीडीएफ डाउनलोड करने में समस्या आई। कृपया टेक्स्ट फाइल या प्रिंट विकल्प का उपयोग करें।');
     } finally {
       setIsGeneratingPdf(false);
     }
