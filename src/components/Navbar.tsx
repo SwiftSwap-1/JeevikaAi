@@ -467,18 +467,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span>हमारे बारे में (About Us)</span>
                 <Icon name="chev" size={12} className="opacity-40" />
               </button>
-              <button
-                onClick={() => handleNav('presentation')}
-                className={`w-full text-left px-3 py-2.5 rounded-xl flex items-center justify-between ${
-                  currentView === 'presentation' ? 'bg-[#245A91]/10 text-[#245A91] font-bold bg-cyan-50 text-[#17365D]' : 'hover:bg-[#F5F7FA] text-[#17365D]'
-                }`}
-              >
-                <span className="font-bold flex items-center gap-1.5">
-                  <Icon name="sparkles" size={14} className="text-[#245A91]" />
-                  <span>📊 पीपीटी प्रेजेंटेशन (Pitch Presentation)</span>
-                </span>
-                <Icon name="chev" size={12} className="opacity-40" />
-              </button>
             </div>
 
             {/* PWA App Install option in drawer */}

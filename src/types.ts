@@ -164,8 +164,7 @@ export type AppView =
   | 'about'
   | 'settings'
   | 'admin'
-  | 'login'
-  | 'presentation';
+  | 'login';
 
 export interface SummaryModalData {
   text: string;

@@ -16,7 +16,6 @@ import { ProfileView } from './components/ProfileView';
 import { NotificationSettingsView } from './components/NotificationSettingsView';
 import { HelpFAQView } from './components/HelpFAQView';
 import { AdminCMSView } from './components/AdminCMSView';
-import { PresentationView } from './components/PresentationView';
 import { OpportunityDetailModal } from './components/OpportunityDetailModal';
 import { SummaryModal } from './components/SummaryModal';
 import { VoiceStartModal } from './components/VoiceStartModal';
@@ -451,14 +450,6 @@ export default function App() {
             go={navigateTo}
             onOpenLogin={() => setAdminLoginModalOpen(true)}
             onLogout={handleLogout}
-          />
-        )}
-
-        {currentView === 'presentation' && (
-          <PresentationView
-            go={navigateTo}
-            onNotify={notify}
-            currentLang={currentLang}
           />
         )}
       </div>

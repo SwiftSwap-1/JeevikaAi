@@ -108,14 +108,6 @@ export const Home: React.FC<HomeProps> = ({
                   <span>Explore Jobs &amp; Training</span>
                   <Icon name="arrowR" size={16} />
                 </button>
-
-                <button
-                  onClick={() => go('presentation')}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-cyan-50 border border-cyan-200 text-[#17365D] hover:bg-cyan-100 font-bold text-sm transition-colors shadow-xs"
-                >
-                  <Icon name="sparkles" size={16} className="text-[#245A91]" />
-                  <span>📊 पीपीटी प्रेजेंटेशन (Pitch Deck)</span>
-                </button>
               </div>
 
               {/* Install App Button Checking Device Installation Status */}
