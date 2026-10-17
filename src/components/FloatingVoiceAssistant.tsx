@@ -3,6 +3,7 @@ import { LogoMark } from './Logo';
 import { Icon } from './Icons';
 import { SupportedLanguage, AppView, BeneficiaryProfile } from '../types';
 import { speechService, SpeechRecognitionResultWrapper } from '../services/speechService';
+import { processLocalAssistantQuery } from '../services/aiAssistantEngine';
 
 interface FloatingVoiceAssistantProps {
   currentView: AppView;
@@ -31,7 +32,7 @@ export const FloatingVoiceAssistant: React.FC<FloatingVoiceAssistantProps> = ({
   const [chatHistory, setChatHistory] = useState<Array<{ sender: 'user' | 'ai'; text: string }>>([
     {
       sender: 'ai',
-      text: 'नमस्ते! बोलिए, मैं सुन रहा हूँ। उदाहरण: "मुझे नौकरी दिखाओ", "प्रशिक्षण केंद्र कहाँ हैं?", या "मेरा रोडमैप खोलो"'
+      text: 'नमस्ते! मैं जीविका एआई हूँ। आप बोलकर पूछ सकते हैं: "रोडमैप कार्ड पढ़ के बताओ", "नौकरी कार्ड बताओ", "कौशल (Skills) कार्ड पढ़ो", या "नौकरियां खोलो"। बोलिए, मैं सुन रहा हूँ!'
     }
   ]);
   const [textInput, setTextInput] = useState<string>('');
@@ -226,10 +227,10 @@ export const FloatingVoiceAssistant: React.FC<FloatingVoiceAssistantProps> = ({
 
       // Auto-greet aloud and immediately start listening for seamless voice interaction
       const greeting = currentLang === 'bho'
-        ? 'नमस्ते! का पूछल चाहत बानी? बोलीं, हम सुनत बानी।'
+        ? 'नमस्ते! हम जीविका एआई बानी। रउआ रोडमैप, नौकरी या हुनर कार्ड पढ़े खातिर कह सकेनी, या पेज खोल सकेनी।'
         : currentLang === 'en'
-        ? 'Hello! What would you like to ask or do? Speak now, I am listening.'
-        : 'नमस्ते! आप क्या पूछना चाहते हैं? बोलिए, मैं सुन रहा हूँ।';
+        ? 'Hello! I am JeevikaAI. You can ask me to read your Roadmap Card, Job Cards, or navigate pages. Speak now, I am listening!'
+        : 'नमस्ते! मैं जीविका एआई हूँ। आप मुझसे "रोडमैप कार्ड पढ़ो", "नौकरी कार्ड बताओ", या "पेज खोलो" कह सकते हैं। बोलिए, मैं सुन रहा हूँ!';
 
       setAiMessage(greeting);
 
@@ -260,11 +261,24 @@ export const FloatingVoiceAssistant: React.FC<FloatingVoiceAssistantProps> = ({
     setChatHistory((prev) => [...prev, { sender: 'user', text: queryText }]);
     setLiveTranscript('');
 
-    try {
-      const workerUrl = import.meta.env.VITE_CLOUDFLARE_WORKER_URL || 'https://jeevikaai.ayushgupt640.workers.dev/';
-      let response;
+    // Pre-evaluate with local Indic & English engine
+    const localResult = processLocalAssistantQuery(queryText, currentView, currentLang, profile);
+
+    let finalReply = localResult.reply;
+    let spokenText = localResult.spokenReply;
+    let targetView = localResult.targetView;
+    let actionHighlight = localResult.actionHighlight;
+    let profileUpdates = localResult.profileUpdates;
+    let isCardRead = localResult.isCardReadout;
+
+    // If query is an explicit card reading or direct navigation, localResult is immediate and 100% authoritative.
+    // If it is a general question, attempt server backend proxy with a safe 3.5s timeout:
+    if (!localResult.isCardReadout && !localResult.targetView) {
       try {
-        response = await fetch(workerUrl, {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+        const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -272,73 +286,69 @@ export const FloatingVoiceAssistant: React.FC<FloatingVoiceAssistantProps> = ({
             language: currentLang,
             currentView,
             userProfile: profile || {}
-          })
+          }),
+          signal: controller.signal
         });
-        if (!response.ok) throw new Error('Worker non-200');
-      } catch {
-        // Fallback to local server proxy endpoint
-        response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: queryText,
-            language: currentLang,
-            currentView,
-            userProfile: profile || {}
-          })
-        });
-      }
+        clearTimeout(timeoutId);
 
-      if (response.ok) {
-        const data = await response.json();
-        const replyText = data.reply || 'जी, मैं आपकी सहायता के लिए तैयार हूँ।';
-
-        setAiMessage(replyText);
-        setChatHistory((prev) => [...prev, { sender: 'ai', text: replyText }]);
-
-        // Speak response aloud
-        setIsSpeaking(true);
-        speechService.speak(replyText, currentLang, () => {
-          setIsSpeaking(false);
-        });
-
-        // Apply profile updates via voice if extracted
-        if (data.profileUpdates && profile && onUpdateProfile) {
-          const updatedProfile = { ...profile, ...data.profileUpdates };
-          onUpdateProfile(updatedProfile);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.reply && !data.fallback) {
+            finalReply = data.reply;
+            spokenText = data.reply;
+            if (data.targetView) targetView = data.targetView;
+            if (data.actionHighlight) actionHighlight = data.actionHighlight;
+            if (data.profileUpdates) profileUpdates = data.profileUpdates;
+          }
         }
-
-        // Direct silent navigation & card pulse highlight
-        if (data.targetView) {
-          go(data.targetView as AppView, data.actionHighlight);
-
-          // Apply a brief pulse glow highlight on the target card/section
-          setTimeout(() => {
-            const highlightId = data.actionHighlight || `${data.targetView}-section`;
-            const el = document.getElementById(highlightId);
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              el.classList.add('ring-4', 'ring-[#287D73]', 'animate-pulse');
-              setTimeout(() => {
-                el.classList.remove('ring-4', 'ring-[#287D73]', 'animate-pulse');
-              }, 3000);
-            }
-          }, 350);
-        }
-      } else {
-        throw new Error('Server returned non-200 status');
+      } catch (err) {
+        // Fallback is already pre-computed in localResult!
+        console.warn('AI assistant using robust local Indic engine:', err);
       }
-    } catch {
-      const fallbackReply = 'जी, आपकी बात सुन ली गई है। आप नीचे दिए गए नेविगेशन से नौकरी, प्रशिक्षण केंद्र या अपना प्रोफाइल देख सकते हैं।';
-      setAiMessage(fallbackReply);
-      setChatHistory((prev) => [...prev, { sender: 'ai', text: fallbackReply }]);
-      setIsSpeaking(true);
-      speechService.speak(fallbackReply, currentLang, () => {
-        setIsSpeaking(false);
-      });
-    } finally {
-      processingRef.current = false;
     }
+
+    setAiMessage(finalReply);
+    setChatHistory((prev) => [...prev, { sender: 'ai', text: finalReply }]);
+
+    // Show temporary banner notice if reading card or navigating
+    if (isCardRead) {
+      setActionNotice(currentLang === 'en' ? '📖 Reading Card Aloud...' : '📖 कार्ड बोलकर सुनाया जा रहा है...');
+      setTimeout(() => setActionNotice(null), 3500);
+    } else if (targetView) {
+      setActionNotice(currentLang === 'en' ? `🚀 Opening ${targetView}...` : `🚀 पेज खोला जा रहा है: ${targetView}...`);
+      setTimeout(() => setActionNotice(null), 3000);
+    }
+
+    // Speak response aloud (clean spoken text)
+    setIsSpeaking(true);
+    speechService.speak(spokenText, currentLang, () => {
+      setIsSpeaking(false);
+    });
+
+    // Apply profile updates via voice if extracted
+    if (profileUpdates && profile && onUpdateProfile) {
+      const updatedProfile = { ...profile, ...profileUpdates };
+      onUpdateProfile(updatedProfile);
+    }
+
+    // Direct navigation & card pulse highlight
+    if (targetView) {
+      go(targetView as AppView, actionHighlight);
+
+      setTimeout(() => {
+        const highlightId = actionHighlight || `${targetView}-section`;
+        const el = document.getElementById(highlightId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-4', 'ring-[#287D73]', 'animate-pulse');
+          setTimeout(() => {
+            el.classList.remove('ring-4', 'ring-[#287D73]', 'animate-pulse');
+          }, 3500);
+        }
+      }, 400);
+    }
+
+    processingRef.current = false;
   };
 
   const handleTextSubmit = (e: React.FormEvent) => {
@@ -486,7 +496,7 @@ export const FloatingVoiceAssistant: React.FC<FloatingVoiceAssistantProps> = ({
                 className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] p-3 rounded-2xl ${
+                  className={`max-w-[85%] p-3 rounded-2xl whitespace-pre-wrap ${
                     msg.sender === 'user'
                       ? 'bg-[#245A91] text-white rounded-br-none font-medium shadow-xs'
                       : 'bg-[#F5F7FA] text-[#17365D] border border-[#DCE3EA] rounded-bl-none font-medium leading-relaxed'
@@ -514,6 +524,55 @@ export const FloatingVoiceAssistant: React.FC<FloatingVoiceAssistantProps> = ({
 
           {/* Voice Record & Keyboard Input Footer */}
           <div className="p-3 bg-white border-t border-[#DCE3EA] space-y-2">
+            {/* Quick Interactive Card Reading & Navigation Chips */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] font-semibold no-scrollbar">
+              <button
+                type="button"
+                onClick={() => processUserQuery(currentLang === 'en' ? 'Read Roadmap Card' : 'रोडमैप कार्ड पढ़ के बताओ')}
+                className="px-2.5 py-1 rounded-lg bg-[#287D73]/10 text-[#287D73] hover:bg-[#287D73]/20 whitespace-nowrap border border-[#287D73]/20 flex items-center gap-1 transition-colors"
+                title="रोडमैप कार्ड बोलकर सुनें"
+              >
+                <span>🗺️</span>
+                <span>{currentLang === 'en' ? 'Read Roadmap' : 'रोडमैप कार्ड पढ़ो'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => processUserQuery(currentLang === 'en' ? 'Read Job Cards' : 'नौकरी कार्ड पढ़ के बताओ')}
+                className="px-2.5 py-1 rounded-lg bg-[#245A91]/10 text-[#245A91] hover:bg-[#245A91]/20 whitespace-nowrap border border-[#245A91]/20 flex items-center gap-1 transition-colors"
+                title="पास की नौकरियों के कार्ड सुनें"
+              >
+                <span>💼</span>
+                <span>{currentLang === 'en' ? 'Read Jobs' : 'नौकरी कार्ड बताओ'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => processUserQuery(currentLang === 'en' ? 'Read Skill Gap Card' : 'कौशल (Skills) कार्ड पढ़ो')}
+                className="px-2.5 py-1 rounded-lg bg-[#D9822B]/10 text-[#D9822B] hover:bg-[#D9822B]/20 whitespace-nowrap border border-[#D9822B]/20 flex items-center gap-1 transition-colors"
+                title="कौशल अंतर कार्ड सुनें"
+              >
+                <span>⚡</span>
+                <span>{currentLang === 'en' ? 'Read Skills' : 'कौशल कार्ड'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => processUserQuery(currentLang === 'en' ? 'Show Training Centers' : 'प्रशिक्षण केंद्र कार्ड बताओ')}
+                className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 whitespace-nowrap border border-purple-200 flex items-center gap-1 transition-colors"
+                title="प्रशिक्षण केंद्र कार्ड सुनें"
+              >
+                <span>🎓</span>
+                <span>{currentLang === 'en' ? 'Training Centers' : 'प्रशिक्षण केंद्र'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => processUserQuery(currentLang === 'en' ? 'Government Schemes' : 'सरकारी योजना कार्ड बताओ')}
+                className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 hover:bg-amber-100 whitespace-nowrap border border-amber-200 flex items-center gap-1 transition-colors"
+                title="सरकारी योजनाएँ सुनें"
+              >
+                <span>🏛️</span>
+                <span>{currentLang === 'en' ? 'Schemes' : 'योजना कार्ड'}</span>
+              </button>
+            </div>
+
             <div className="flex items-center gap-2">
               <button
                 type="button"
